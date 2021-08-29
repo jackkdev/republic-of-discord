@@ -1,8 +1,8 @@
 use crate::{model::Party, util::Orm};
 use failure::Fallible;
-use mongodb::{bson::doc, Database};
+use mongodb::Database;
 use serenity::{
-    builder::CreateInteractionResponseData, client::Context, futures::TryStreamExt,
+    builder::CreateInteractionResponseData, client::Context,
     model::interactions::application_command::ApplicationCommandInteraction,
 };
 use tracing::{error, instrument};

@@ -1,9 +1,13 @@
 use failure::Fallible;
 use serde::{Deserialize, Serialize};
-use serenity::{client::{Cache, Context}, http::Http, model::{
+use serenity::{
+    client::{Cache, Context},
+    http::Http,
+    model::{
         guild::{Guild, Member, Role},
         id::{GuildId, RoleId},
-    }};
+    },
+};
 
 use crate::util::Orm;
 
@@ -19,14 +23,14 @@ pub struct Party {
     role_id: String,
     #[serde(skip)]
     role: Option<Role>,
-    
+
     emoji_id: String,
 }
 
 impl Party {
     /// Returns an `Option` containing a `Guild`.
     pub async fn guild(&self, ctx: &Context) -> Option<Guild> {
-         GuildId(
+        GuildId(
             self.guild_id
                 .parse()
                 .expect("failed to parse guild_id as u64"),

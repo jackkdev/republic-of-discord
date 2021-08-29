@@ -1,89 +1,15 @@
-use std::process;
-
 use clap::{App, Arg};
 use failure::Fallible;
-use module::politics::Politics;
 use mongodb::options::ClientOptions;
-use serde_json::value::Value;
-use serenity::{
-    async_trait,
-    builder::CreateInteractionResponseData,
-    client::{Context, EventHandler},
-    model::{id::GuildId, interactions::Interaction, prelude::Ready},
-    Client,
-};
-use tracing::{error, instrument};
+use serenity::Client;
 
+use crate::handler::{Handler, HandlerContext};
+use crate::module::politics::Politics;
+
+mod handler;
 mod model;
 mod module;
 mod util;
-
-/// Handles events through `EventHandler`.
-#[derive(Debug)]
-struct Handler {
-    politics: Politics,
-    mongo: mongodb::Client,
-}
-
-#[async_trait]
-impl EventHandler for Handler {
-    #[instrument(skip(self, ctx, _data_about_bot))]
-    async fn ready(&self, ctx: Context, _data_about_bot: Ready) {
-        if let Err(why) = GuildId(872182516449157220)
-            .create_application_command(&ctx.http, |command| {
-                command
-                    .name("parties")
-                    .description("Shows all the parties in the current guild.")
-            })
-            .await
-        {
-            error!("Failed to register global application commands: {}", why);
-            process::exit(1);
-        };
-    }
-
-    #[instrument(skip(self, ctx))]
-    async fn interaction_create(&self, ctx: Context, interaction: Interaction) {
-        if let Interaction::ApplicationCommand(command) = interaction {
-            let result: Option<Fallible<CreateInteractionResponseData>> =
-                match command.data.name.as_str() {
-                    "parties" => Some(
-                        self.politics
-                            .parties(&ctx, self.mongo.database("republic-of-discord"), &command)
-                            .await,
-                    ),
-                    _ => None,
-                };
-
-            if let Some(result) = result {
-                let data = match result {
-                    Ok(data) => data,
-                    Err(why) => {
-                        let mut data = CreateInteractionResponseData::default();
-                        data.create_embed(move |embed| {
-                            embed.color(0xff1010).description(format!("Error: {}", why))
-                        });
-
-                        data
-                    }
-                };
-
-                if let Err(why) = command
-                    .create_interaction_response(&ctx.http, |response| {
-                        response.0.insert(
-                            "data",
-                            Value::Object(serenity::utils::hashmap_to_json_map(data.0)),
-                        );
-                        response
-                    })
-                    .await
-                {
-                    error!("Error responding to interaction: {}", why);
-                };
-            };
-        }
-    }
-}
 
 #[tokio::main]
 async fn main() -> Fallible<()> {
@@ -113,6 +39,13 @@ async fn main() -> Fallible<()> {
                 .takes_value(true)
                 .help("Sets the MongoDB URI for the application to connect to."),
         )
+        .arg(
+            Arg::with_name("development_guild_id")
+                .short("g")
+                .long("development-guild-id")
+                .takes_value(true)
+                .help("Sets the Guild which has the hot-reload development commands.")
+        )
         .get_matches();
 
     let token = match matches.value_of("token") {
@@ -130,8 +63,13 @@ async fn main() -> Fallible<()> {
         None => panic!("a mongodb uri must be provided"),
     };
 
+    let development_guild_id: u64 = match matches.value_of("development_guild_id") {
+        Some(value) => value,
+        None => panic!("a development guild id must be provided"),
+    }.parse().expect("expected development_guild_id to be a u64");
+
     // Connect to MongoDB.
-    let mongo = mongodb::Client::with_options(ClientOptions::parse(mongodb_uri).await?)?;
+    let mongo_client = mongodb::Client::with_options(ClientOptions::parse(mongodb_uri).await?)?;
 
     // Create the bot client with the options from the command-line.
     let mut client = Client::builder(token)
@@ -140,10 +78,10 @@ async fn main() -> Fallible<()> {
                 .parse()
                 .expect("expected the application_id to be an unsigned integer"),
         )
-        .event_handler(Handler { 
-            mongo,
-            politics: Politics::default(),
-        })
+        .event_handler(Handler::with_context(HandlerContext {
+            development_guild_id,
+            mongo_client,
+        }))
         .await?;
 
     if let Err(why) = client.start().await {
